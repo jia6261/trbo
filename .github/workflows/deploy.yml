@@ -13,10 +13,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # 使用最新的 Ubuntu 托管环境
     permissions:
-      contents: write # 必须赋予写权限，以便创建 Release 并上传附件
-      pages: write    # 必须赋予 Pages 写权限，以便后续部署网站
+      contents: write # 赋予创建 Release 和上传 zip 附件的写权限
+      pages: write    # 赋予部署 Pages 网站的写权限
       id-token: write # 部署 Pages 所需的身份令牌权限
     steps:
     - name: Checkout self
@@ -34,7 +34,13 @@ jobs:
     - name: Install Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: 22
+        node-version: 24 # 🚀 紧跟 2026 年新规，使用 Node 24 长期维护版
+
+    # 🚀 新增步骤：紧跟 2026 年 6 月新规，锁定使用官方推荐的 Python 3.14 环境来安全运行 patch.py
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.14'
 
     - name: Build
       run: |
@@ -45,7 +51,7 @@ jobs:
     - name: Patch
       run: python3 patch.py
 
-    # 1. 自动从远程 URL 下载所有 11 个 JS 文件到编译产物的 static/extension-worker 目录中
+    # 1. 全自动从你的远程 URL 下载所有 11 个 JS 文件到编译产物的指定目录中
     - name: Fetch and Inject JS Extensions
       run: |
         TARGET_DIR="./scratch-gui/build/static/extension-worker"
@@ -72,7 +78,7 @@ jobs:
           curl -sL "$BASE_URL/$FILE" -o "$TARGET_DIR/$FILE"
         done
 
-    # 2. 将注入了扩展文件的完整 build 目录打包为 zip 压缩包（供 Release 使用）
+    # 2. 将注入了扩展文件以及经过 patch.py 处理后的完整 build 目录打包为 zip 压缩包
     - name: Create Zip Archive
       run: |
         cd scratch-gui/build
@@ -84,7 +90,7 @@ jobs:
       id: tag
       run: echo "tag_name=v$(date +'%Y.%m.%d')-${{ github.run_id }}" >> $GITHUB_OUTPUT
 
-    # 4. 发布 GitHub Release 并上传刚才做好的 zip 文件
+    # 4. 发布 GitHub Release 并上传刚才做好的带有完整扩展和 patch 修复的 zip 文件
     - name: Create GitHub Release
       id: create_release
       uses: softprops/action-gh-release@v2
@@ -95,7 +101,7 @@ jobs:
         prerelease: false
         files: ./scratch-gui-release.zip
 
-    # 5. 上传构建产物作为 GitHub Pages 的站点资源（同样包含下载好的 JS 扩展）
+    # 5. 上传构建产物作为 GitHub Pages 的站点资源（网页和压缩包内容完全保持一致）
     - name: Upload Pages Artifact
       uses: actions/upload-pages-artifact@v3
       with:
