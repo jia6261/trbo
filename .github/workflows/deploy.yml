@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy Pages and Publish Release
 
 on:
   workflow_dispatch:
@@ -8,40 +8,101 @@ on:
     - cron: '52 18 * * 2'
 
 concurrency:
-  group: "deploy"
+  group: "deploy-and-release"
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须赋予写权限，以便创建 Release 并上传附件
+      pages: write    # 必须赋予 Pages 写权限，以便后续部署网站
+      id-token: write # 部署 Pages 所需的身份令牌权限
     steps:
     - name: Checkout self
       uses: actions/checkout@v4
       with:
         persist-credentials: false
+
     - name: Checkout scratch-gui
       uses: actions/checkout@v4
       with:
         repository: TurboWarp/scratch-gui
         path: scratch-gui
         persist-credentials: false
+
     - name: Install Node.js
       uses: actions/setup-node@v4
       with:
         node-version: 22
+
     - name: Build
       run: |
         cd scratch-gui
         npm ci
         NODE_ENV=production ROUTING_STYLE=hash npm run build
+
     - name: Patch
       run: python3 patch.py
-    - name: Upload pages artifact
+
+    # 1. 自动从远程 URL 下载所有 11 个 JS 文件到编译产物的 static/extension-worker 目录中
+    - name: Fetch and Inject JS Extensions
+      run: |
+        TARGET_DIR="./scratch-gui/build/static/extension-worker"
+        mkdir -p "$TARGET_DIR"
+        
+        BASE_URL="https://raw.githubusercontent.com/jia6261/mirror-trbowrarp--extensions/refs/heads/main"
+        
+        FILES=(
+          "files.js"
+          "gamejolt.js"
+          "gamepad.js"
+          "iframe.js"
+          "itchio.js"
+          "local-storage.js"
+          "navigator.js"
+          "numerical-encoding-2.js"
+          "penplus.js"
+          "pointerlock.js"
+          "example-extension.js"
+        )
+        
+        for FILE in "${FILES[@]}"; do
+          echo "Downloading $FILE..."
+          curl -sL "$BASE_URL/$FILE" -o "$TARGET_DIR/$FILE"
+        done
+
+    # 2. 将注入了扩展文件的完整 build 目录打包为 zip 压缩包（供 Release 使用）
+    - name: Create Zip Archive
+      run: |
+        cd scratch-gui/build
+        zip -r ../../scratch-gui-release.zip .
+        cd ../../
+
+    # 3. 生成唯一的 Release 标签名字
+    - name: Generate Tag Name
+      id: tag
+      run: echo "tag_name=v$(date +'%Y.%m.%d')-${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+    # 4. 发布 GitHub Release 并上传刚才做好的 zip 文件
+    - name: Create GitHub Release
+      id: create_release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag_name }}
+        name: Release ${{ steps.tag.outputs.tag_name }}
+        draft: false
+        prerelease: false
+        files: ./scratch-gui-release.zip
+
+    # 5. 上传构建产物作为 GitHub Pages 的站点资源（同样包含下载好的 JS 扩展）
+    - name: Upload Pages Artifact
       uses: actions/upload-pages-artifact@v3
       with:
         path: ./scratch-gui/build/
         retention-days: 30
 
+  # 独立的部署任务：负责把 build 产生的网站内容正式发布到 GitHub Pages 网址上
   deploy:
     environment:
       name: github-pages
